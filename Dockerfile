@@ -2,17 +2,19 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/root/.local/bin:${PATH}" \
+    UV_SYSTEM_PYTHON=1 \
+    UV_NO_CACHE=1
 
 COPY pyproject.toml ./
-RUN uv lock && uv sync --frozen
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv lock && uv sync --frozen \
+    && apt-get purge -y --auto-remove curl \
+    && rm -rf /var/lib/apt/lists/* /root/.local/share/uv
 
 COPY . .
 
