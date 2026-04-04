@@ -190,3 +190,9 @@ query = (Product
 - Wrap bulk inserts in `db.atomic()` for transactional safety and performance.
 - The template uses `teardown_appcontext` for connection cleanup, so connections are closed even when requests fail.
 - Check `.env.example` for all available configuration options.
+
+## Gold Tier Load Testing
+
+- Gold-tier scalability assets are in `docker-compose.gold.yml`, `deploy/nginx/nginx.conf`, and `loadtest/k6/gold.js`.
+- Redis-backed redirect caching is enabled when `REDIS_URL` is set.
+- Full step-by-step verification is documented in `docs/gold-tier-loadtest.md`.

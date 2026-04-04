@@ -5,6 +5,7 @@ from peewee import DoesNotExist
 from playhouse.shortcuts import model_to_dict
 
 from app.auth import assert_owner, require_auth
+from app.cache import cache, redirect_cache_key
 from app.events import log_event
 from app.models.url import Url
 from app.utils import generate_short_code
@@ -33,6 +34,8 @@ def create_url():
         created_at=now,
         updated_at=now,
     )
+
+    cache.set(redirect_cache_key(short_code), original_url)
 
     log_event(url.id, g.current_user.id, "created", {"short_code": short_code, "original_url": original_url})
 
@@ -66,6 +69,8 @@ def update_url(url_id):
             setattr(url, field, data[field])
             log_event(url.id, g.current_user.id, "updated", {"field": field, "new_value": str(data[field])})
 
+    cache.delete(redirect_cache_key(url.short_code))
+
     url.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     url.save()
 
@@ -85,6 +90,8 @@ def delete_url(url_id):
     url.is_active = False
     url.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     url.save()
+
+    cache.delete(redirect_cache_key(url.short_code))
 
     log_event(url.id, g.current_user.id, "deleted", {"reason": "user_requested"})
 
