@@ -43,7 +43,7 @@ variable "instance_type" {
 variable "app_image" {
   description = "Container image for the app"
   type        = string
-  default     = "replace-with-your-dockerhub-user/your-app:latest"
+  default     = "ogdmerlin/scalex-pe26:latest"
 }
 
 variable "app_container_port" {
