@@ -107,10 +107,10 @@ def get_url(url_id):
 
 @urls_crud_bp.route("", methods=["POST"], strict_slashes=False)
 def create_url():
-    # Fractured Vessel: reject non-JSON / malformed bodies
+    # Fractured Vessel: reject non-JSON / non-object bodies
     data = request.get_json(force=True, silent=True)
-    if data is None:
-        return jsonify(error="Request body must be valid JSON"), 400
+    if not isinstance(data, dict):
+        return jsonify(error="Request body must be a valid JSON object"), 400
 
     original_url = data.get("original_url", "").strip()
     # Unwitting Stranger: reject missing required fields

@@ -96,10 +96,10 @@ def list_events():
 
 @events_crud_bp.route("", methods=["POST"], strict_slashes=False)
 def create_event():
-    # Fractured Vessel: reject non-JSON / malformed bodies
+    # Fractured Vessel: reject non-JSON / non-object bodies
     data = request.get_json(force=True, silent=True)
-    if data is None:
-        return jsonify(error="Request body must be valid JSON"), 400
+    if not isinstance(data, dict):
+        return jsonify(error="Request body must be a valid JSON object"), 400
 
     url_id = data.get("url_id")
     user_id = data.get("user_id")

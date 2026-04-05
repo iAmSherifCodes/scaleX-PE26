@@ -91,17 +91,22 @@ def get_user(user_id):
 def create_user():
     from app.database import db
 
-    # Fractured Vessel: reject non-JSON bodies
+    # Fractured Vessel: reject non-JSON bodies and non-object payloads
     data = request.get_json(force=True, silent=True)
-    if data is None:
-        return jsonify(error="Request body must be valid JSON"), 400
+    if not isinstance(data, dict):
+        return jsonify(error="Request body must be a valid JSON object"), 400
 
-    username = data.get("username", "").strip()
-    email = data.get("email", "").strip()
+    username = data.get("username")
+    email = data.get("email")
 
-    # Unwitting Stranger: reject missing credentials
-    if not username or not email:
+    # Unwitting Stranger: reject missing or non-string credentials
+    if not isinstance(username, str) or not username.strip():
         return jsonify(error="username and email are required"), 400
+    if not isinstance(email, str) or not email.strip():
+        return jsonify(error="username and email are required"), 400
+
+    username = username.strip()
+    email = email.strip()
 
     # Pre-check for conflicts with specific error messages
     existing_username = User.get_or_none(User.username == username)

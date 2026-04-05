@@ -26,9 +26,16 @@ def resolve(short_code):
             original_url = cached_value
             url_id = user_id = None
 
+        # Slumbering Guide: verify URL is still active even on cache hit.
+        if url_id:
+            active = Url.select().where(Url.id == url_id, Url.is_active == True).exists()
+            if not active:
+                cache.delete(cache_key)
+                return jsonify(error="Short URL not found or inactive"), 404
+
         # Unseen Observer: log every redirect, even cache hits.
         if url_id:
-            log_event(url_id, user_id, "clicked", {}, async_=True)
+            log_event(url_id, user_id, "clicked", {})
 
         response = redirect(original_url, 302)
         response.headers["X-Cache"] = "HIT"
@@ -42,7 +49,7 @@ def resolve(short_code):
     if url is None:
         return jsonify(error="Short URL not found or inactive"), 404
 
-    log_event(url.id, url.user_id, "clicked", {}, async_=True)
+    log_event(url.id, url.user_id, "clicked", {})
 
     cache.set(cache_key, json.dumps({"u": url.original_url, "id": url.id, "uid": url.user_id}))
     response = redirect(url.original_url, 302)
