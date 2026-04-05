@@ -1,43 +1,45 @@
-# MLH PE Hackathon — Flask + Peewee + PostgreSQL Template
+# URL Shortener
 
-A minimal hackathon starter template. You get the scaffolding and database wiring — you build the models, routes, and CSV loading logic.
+A production-ready URL shortener built with Flask, Peewee ORM, and PostgreSQL. Scales from a single container up to a Redis-cached multi-instance fleet behind Nginx.
 
-**Stack:** Flask · Peewee ORM · PostgreSQL · uv
+**Stack:** Flask · Peewee ORM · PostgreSQL · Redis (Gold) · Nginx (Silver/Gold) · Gunicorn · Docker
 
-## **Important**
+---
 
-You need to work with around the seed files that you can find in [MLH PE Hackathon](https://mlh-pe-hackathon.com) platform. This will help you build the schema for the database and have some data to do some testing and submit your project for judging. If you need help with this, reach out on Discord or on the Q&A tab on the platform.
+## Architecture
 
-## Prerequisites
+Three deployment tiers, each building on the last:
 
-- **uv** — a fast Python package manager that handles Python versions, virtual environments, and dependencies automatically.
-  Install it with:
-  ```bash
-  # macOS / Linux
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+Bronze — Single Container
+─────────────────────────
+Client ──► Flask + Gunicorn (4w×8t) ──► PostgreSQL
+           :5000
 
-  # Windows (PowerShell)
-  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-  ```
-  For other methods see the [uv installation docs](https://docs.astral.sh/uv/getting-started/installation/).
-- PostgreSQL running locally (you can use Docker or a local instance)
+Silver — Fleet + Load Balancer
+──────────────────────────────
+                ┌──► App 1 (Flask/Gunicorn) ─┐
+Client ──► Nginx├──► App 2 (Flask/Gunicorn) ─┼──► PostgreSQL
+           :8080└──► App 3 (Flask/Gunicorn) ─┘
+                  least_conn balancing
 
-## uv Basics
+Gold — Fleet + Load Balancer + Redis Cache
+──────────────────────────────────────────
+                ┌──► App 1 (Flask/Gunicorn) ─┬──► Redis (in-memory, TTL 60s)
+Client ──► Nginx├──► App 2 (Flask/Gunicorn) ─┤    :6379
+           :8080└──► App 3 (Flask/Gunicorn) ─┘
+                  least_conn balancing              └──► PostgreSQL (cache miss only)
+```
 
-`uv` manages your Python version, virtual environment, and dependencies automatically — no manual `python -m venv` needed.
+Each redirect checks Redis first (`X-Cache: HIT`). Only on a cache miss does the app hit PostgreSQL, then writes the result to Redis for subsequent requests. Cache is invalidated on URL update or delete.
 
-| Command | What it does |
-|---------|--------------|
-| `uv sync` | Install all dependencies (creates `.venv` automatically) |
-| `uv run <script>` | Run a script using the project's virtual environment |
-| `uv add <package>` | Add a new dependency |
-| `uv remove <package>` | Remove a dependency |
+---
 
-## Quick Start
+## Quick Start (Local Dev)
 
 ```bash
 # 1. Clone the repo
-git clone <repo-url> && cd mlh-pe-hackathon
+git clone <repo-url> && cd scaleX-PE26
 
 # 2. Install dependencies
 uv sync
@@ -48,151 +50,277 @@ createdb hackathon_db
 # 4. Configure environment
 cp .env.example .env   # edit if your DB credentials differ
 
-# 5. Run the server
+# 5. Seed data (users → urls → events)
+uv run seed.py
+
+# 6. Start the server
 uv run run.py
 
-# 6. Verify
+# 7. Verify
 curl http://localhost:5000/health
 # → {"status":"ok"}
 ```
 
-## Project Structure
+---
 
-```
-mlh-pe-hackathon/
-├── app/
-│   ├── __init__.py          # App factory (create_app)
-│   ├── database.py          # DatabaseProxy, BaseModel, connection hooks
-│   ├── models/
-│   │   └── __init__.py      # Import your models here
-│   └── routes/
-│       └── __init__.py      # register_routes() — add blueprints here
-├── .env.example             # DB connection template
-├── .gitignore               # Python + uv gitignore
-├── .python-version          # Pin Python version for uv
-├── pyproject.toml           # Project metadata + dependencies
-├── run.py                   # Entry point: uv run run.py
-└── README.md
-```
+## Environment Variables
 
-## How to Add a Model
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_NAME` | yes | — | PostgreSQL database name |
+| `DATABASE_HOST` | yes | — | PostgreSQL host (`postgres` inside Docker, `localhost` for local dev) |
+| `DATABASE_PORT` | yes | — | PostgreSQL port (typically `5432`) |
+| `DATABASE_USER` | yes | — | PostgreSQL username |
+| `DATABASE_PASSWORD` | yes | — | PostgreSQL password |
+| `REDIS_URL` | no | `""` (disabled) | Redis connection string, e.g. `redis://redis:6379/0`. Leave empty to disable caching (Bronze/Silver). |
+| `CACHE_TTL_SECONDS` | no | `60` | Seconds a redirect target stays cached in Redis. Increase for read-heavy workloads. |
+| `FLASK_DEBUG` | no | `false` | Enables Flask debug mode. Never `true` in production. |
 
-1. Create a file in `app/models/`, e.g. `app/models/product.py`:
+Copy `.env.example` to `.env` and fill in your values before starting the server.
 
-```python
-from peewee import CharField, DecimalField, IntegerField
+---
 
-from app.database import BaseModel
+## API Reference
 
+**Auth:** Pass `X-API-Key: <key>` on protected routes. API keys are generated by `seed.py` and printed for the first 5 users.
 
-class Product(BaseModel):
-    name = CharField()
-    category = CharField()
-    price = DecimalField(decimal_places=2)
-    stock = IntegerField()
-```
+### Redirect
 
-2. Import it in `app/models/__init__.py`:
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/<short_code>` | no | 302 redirect to original URL; logs `clicked` event async |
 
-```python
-from app.models.product import Product
+```bash
+curl -I http://localhost:5000/4mya84
+# HTTP/1.1 302 FOUND
+# Location: https://example.com
+# X-Cache: MISS    ← HIT on subsequent requests (Gold tier with Redis)
 ```
 
-3. Create the table (run once in a Python shell or a setup script):
+### URLs
 
-```python
-from app.database import db
-from app.models.product import Product
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/urls/` | yes | Create a short URL |
+| `GET` | `/api/urls/<id>` | no | Get URL detail |
+| `PATCH` | `/api/urls/<id>` | yes, owner | Update `title`, `original_url`, or `is_active` |
+| `DELETE` | `/api/urls/<id>` | yes, owner | Soft delete — sets `is_active=false`, returns 204 |
 
-db.create_tables([Product])
+```bash
+# Create a short URL
+curl -X POST http://localhost:5000/api/urls/ \
+  -H "X-API-Key: <key>" \
+  -H "Content-Type: application/json" \
+  -d '{"original_url": "https://example.com", "title": "Example"}'
+# → 201 {"id": 1, "short_code": "ab12cd", "original_url": "...", "is_active": true, ...}
+
+# Get URL detail
+curl http://localhost:5000/api/urls/1
+# → 200 {"id": 1, "short_code": "ab12cd", ...}
+
+# Update title
+curl -X PATCH http://localhost:5000/api/urls/1 \
+  -H "X-API-Key: <key>" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "New title"}'
+# → 200 {...updated object...}
+
+# Soft delete
+curl -X DELETE http://localhost:5000/api/urls/1 \
+  -H "X-API-Key: <key>"
+# → 204 No Content
 ```
 
-## How to Add Routes
+### Users & Events
 
-1. Create a blueprint in `app/routes/`, e.g. `app/routes/products.py`:
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/users/<id>/urls` | no | Paginated list of a user's URLs |
+| `GET` | `/api/users/<id>/events` | no | Paginated list of a user's events |
+| `GET` | `/api/urls/<id>/events` | no | Paginated event history for a URL |
 
-```python
-from flask import Blueprint, jsonify
-from playhouse.shortcuts import model_to_dict
+Pagination params: `?page=1&per_page=20` (max `per_page`: 100).
 
-from app.models.product import Product
+Event types: `created`, `updated`, `deleted`, `clicked`.
 
-products_bp = Blueprint("products", __name__)
+```bash
+curl "http://localhost:5000/api/users/1/urls?page=1&per_page=5"
+# → {"page": 1, "per_page": 5, "total": 42, "items": [...]}
 
+curl "http://localhost:5000/api/users/1/events?page=1&per_page=20"
 
-@products_bp.route("/products")
-def list_products():
-    products = Product.select()
-    return jsonify([model_to_dict(p) for p in products])
+curl "http://localhost:5000/api/urls/1/events"
 ```
 
-2. Register it in `app/routes/__init__.py`:
+---
 
-```python
-def register_routes(app):
-    from app.routes.products import products_bp
-    app.register_blueprint(products_bp)
+## Deployment
+
+### Bronze — Single Container
+
+Single app instance + PostgreSQL. Good for baseline measurement.
+
+```bash
+docker compose -f docker-compose.bronze.yml up -d --build
+uv run seed.py   # run from host, targets localhost:5432
 ```
 
-## How to Load CSV Data
+Verify:
 
-```python
-import csv
-from peewee import chunked
-from app.database import db
-from app.models.product import Product
-
-def load_csv(filepath):
-    with open(filepath, newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    with db.atomic():
-        for batch in chunked(rows, 100):
-            Product.insert_many(batch).execute()
+```bash
+curl http://localhost:5000/health
+# → {"status":"ok"}
 ```
 
-## Useful Peewee Patterns
+Full runbook (load test steps, seed fallback, artifacts): [docs/bronze-tier-loadtest.md](docs/bronze-tier-loadtest.md)
 
-```python
-from peewee import fn
-from playhouse.shortcuts import model_to_dict
+---
 
-# Select all
-products = Product.select()
+### Silver — Fleet + Load Balancer
 
-# Filter
-cheap = Product.select().where(Product.price < 10)
+Three app containers behind an Nginx reverse proxy. Nginx uses `least_conn` to route to the least-busy container.
 
-# Get by ID
-p = Product.get_by_id(1)
-
-# Create
-Product.create(name="Widget", category="Tools", price=9.99, stock=50)
-
-# Convert to dict (great for JSON responses)
-model_to_dict(p)
-
-# Aggregations
-avg_price = Product.select(fn.AVG(Product.price)).scalar()
-total = Product.select(fn.SUM(Product.stock)).scalar()
-
-# Group by
-from peewee import fn
-query = (Product
-         .select(Product.category, fn.COUNT(Product.id).alias("count"))
-         .group_by(Product.category))
+```bash
+docker compose -f docker-compose.silver.yml up -d --build
 ```
 
-## Tips
+Verify the fleet:
 
-- Use `model_to_dict` from `playhouse.shortcuts` to convert model instances to dictionaries for JSON responses.
-- Wrap bulk inserts in `db.atomic()` for transactional safety and performance.
-- The template uses `teardown_appcontext` for connection cleanup, so connections are closed even when requests fail.
-- Check `.env.example` for all available configuration options.
+```bash
+docker ps
+# app1, app2, app3, nginx, postgres — all Up
+```
 
-## Gold Tier Load Testing
+Traffic flows through `http://localhost:8080`. Full runbook: [docs/silver-tier-loadtest.md](docs/silver-tier-loadtest.md)
 
-- Gold-tier scalability assets are in `docker-compose.gold.yml`, `deploy/nginx/nginx.conf`, and `loadtest/k6/gold.js`.
-- Redis-backed redirect caching is enabled when `REDIS_URL` is set.
-- Full step-by-step verification is documented in `docs/gold-tier-loadtest.md`.
+---
+
+### Gold — Fleet + Load Balancer + Redis Cache
+
+Adds a Redis container. `REDIS_URL` is set automatically in `docker-compose.gold.yml`. Redirect responses carry `X-Cache: HIT` or `X-Cache: MISS` as caching evidence.
+
+```bash
+docker compose -f docker-compose.gold.yml up -d --build
+```
+
+Verify the fleet:
+
+```bash
+docker ps
+# app1, app2, app3, nginx, redis, postgres — all Up
+```
+
+Check cache behaviour:
+
+```bash
+curl -I http://localhost:8080/4mya84   # X-Cache: MISS
+curl -I http://localhost:8080/4mya84   # X-Cache: HIT
+```
+
+Full runbook (100 req/sec and 500 VU variants): [docs/gold-tier-loadtest.md](docs/gold-tier-loadtest.md)
+
+---
+
+## Rollback
+
+```bash
+# 1. Tear down the current stack (data preserved in postgres volume)
+docker compose -f docker-compose.<tier>.yml down
+
+# 2. Pull the previous image
+docker pull <your-image>:<previous-tag>
+
+# 3. Update the image reference in the compose file, then restart
+docker compose -f docker-compose.<tier>.yml up -d
+```
+
+To also wipe the database volume (destructive — data is lost):
+
+```bash
+docker compose -f docker-compose.<tier>.yml down -v
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `could not connect to server` on seed | Postgres not ready | Check `docker ps` — wait until postgres shows `(healthy)` |
+| `seed.py` fails with FK violation | Wrong insert order | Seeds must go users → urls → events. Drop and re-run: `dropdb hackathon_db && createdb hackathon_db && uv run seed.py` |
+| Nginx returns `502 Bad Gateway` | App containers still starting | Give containers ~10s after `up`, then retry. Run `docker logs <app1>` to check. |
+| `redis.exceptions.ConnectionError` | `REDIS_URL` not set or Redis not running | Only needed for Gold. Leave `REDIS_URL` empty for Bronze/Silver. |
+| `X-Cache` header absent | Redis disabled | `X-Cache` only appears when `REDIS_URL` is configured (Gold tier). |
+| Port 5000 or 8080 already in use | Another process on that port | Edit the host port in the compose file, e.g. change `"8080:80"` to `"9090:80"`. |
+| `ModuleNotFoundError` | Dependencies not installed | Run `uv sync` before `uv run run.py` or `uv run seed.py`. |
+
+---
+
+## Load Testing
+
+All scripts live in `loadtest/k6/` and run via Docker (no local k6 install needed).
+
+| Script | Tier | Load profile | Thresholds |
+|---|---|---|---|
+| `bronze.js` | Bronze | Ramp to 50 VUs, hold 60s | p95 < 5s, error rate < 10% |
+| `silver.js` | Silver | Ramp to 200 VUs, hold 60s | p95 < 3s, error rate < 5% |
+| `gold.js` | Gold | Arrival rate, ramp to 100 req/sec | p95 < 3s, error rate < 5% |
+| `gold-500vus.js` | Gold | Ramp to 500 VUs, hold 2m | p95 < 3s, error rate < 5% |
+
+All scripts accept environment overrides:
+
+| Variable | Default | Description |
+|---|---|---|
+| `BASE_URL` | tier-specific | Target host (e.g. `http://localhost:5000`) |
+| `HOT_PATH` | `/4mya84` | Short code hit at 80% traffic (the redirect hot path) |
+| `COLD_PATH` | `/health` | Low-traffic path for the remaining 20% |
+
+Example — run silver test against a custom host:
+
+```bash
+docker run --rm --network host \
+  -e BASE_URL=http://localhost:8080 \
+  -e HOT_PATH=/4mya84 \
+  -v "$PWD/loadtest/k6:/scripts" \
+  grafana/k6 run /scripts/silver.js
+```
+
+See tier runbooks for step-by-step instructions and expected output.
+
+---
+
+## Capacity & Known Limits
+
+| Resource | Value | Notes |
+|---|---|---|
+| Gunicorn workers | 4 per container | `-w 4` in Dockerfile CMD |
+| Gunicorn threads | 8 per worker | `-k gthread --threads 8` — 32 concurrent req/container |
+| App containers (tested) | 3 | Defined in Silver/Gold compose files |
+| Total concurrent capacity | ~96 req | 3 containers × 32 concurrent req |
+| `per_page` max | 100 | Hard-coded in users and events routes |
+| Redis TTL | 60s (default) | Configurable via `CACHE_TTL_SECONDS` |
+| `short_code` space | ~56 billion | 62^6 alphanumeric combinations |
+| Tested peak load | 500 VUs / 100 req/sec | Gold tier with Redis enabled |
+
+---
+
+## Technical Decisions
+
+**Gunicorn `gthread` over sync workers**
+Flask is I/O bound — the bottleneck is waiting on PostgreSQL, not CPU. `gthread` workers share a process and use OS threads for concurrency, handling DB wait time efficiently without the memory overhead of spawning extra processes. 4 workers × 8 threads gives 32 in-flight requests per container.
+
+**Redis for redirect caching**
+Before caching, every `GET /<short_code>` hit PostgreSQL with an indexed lookup. Under high concurrency, connection pool pressure became the primary bottleneck. Redis shifts repeat reads to an in-memory store (default TTL 60s), eliminating DB round-trips for hot short codes and keeping error rates under 5% at 500 VUs. Cache is invalidated on PATCH and DELETE so stale redirects are never served.
+
+**Nginx `least_conn` load balancing**
+Round-robin distributes by request count, not load. Under k6's variable sleep profiles, some connections hold longer than others, creating hot spots on specific containers. `least_conn` routes each new request to whichever backend has the fewest active connections, distributing load by actual pressure rather than count.
+
+**Async event logging on redirects**
+`clicked` events are written in a daemon thread so the 302 response is not blocked by a DB write. `created`, `updated`, and `deleted` events are logged synchronously since they are already inside a write transaction and latency expectations are lower.
+
+**Peewee `DatabaseProxy`**
+Allows all models to be defined at import time before the database connection is established. The proxy is bound to the real PostgreSQL connection inside `init_db()`, which runs within the app factory after environment config is loaded. This keeps model definitions clean and avoids circular import issues.
+
+---
+
+Tier runbooks: [Bronze](docs/bronze-tier-loadtest.md) · [Silver](docs/silver-tier-loadtest.md) · [Gold](docs/gold-tier-loadtest.md)

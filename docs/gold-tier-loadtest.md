@@ -73,7 +73,9 @@ PY
 
 Pick any existing active short code from your `urls` table. Example shown as `abc123`.
 
-## 4) Run Gold tsunami test (100 req/sec)
+## 4) Run Gold tsunami test — choose a variant
+
+### Option A: Arrival-rate test (100 req/sec)
 
 Run k6 in Docker (no host install needed):
 
@@ -86,10 +88,27 @@ docker run --rm --network host \
 ```
 
 What this test does:
-- Ramps to 100 iterations/sec
+- Ramps from 20 → 40 → 80 → 100 iterations/sec (arrival rate)
 - Sends mostly redirect traffic (cache-hot path)
 - Enforces `http_req_failed < 5%`
-- Enforces `p95 < 3000ms`
+- Enforces `p(95) < 3000ms`
+
+### Option B: 500 VU concurrent users test
+
+```bash
+docker run --rm --network host \
+	-e BASE_URL=http://localhost:8080 \
+	-e HOT_PATH=/abc123 \
+	-v "$PWD/loadtest/k6:/scripts" \
+	grafana/k6 run /scripts/gold-500vus.js
+```
+
+What this test does:
+- Ramps 0 → 100 → 300 → 500 VUs in stages
+- Holds at 500 VUs for 2 minutes
+- 85% of traffic hits the redirect path (cache-hot), 15% hits `/health`
+- Enforces `http_req_failed < 5%`
+- Enforces `p(95) < 3000ms`
 
 ## 5) Capture cache evidence
 
