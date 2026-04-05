@@ -126,6 +126,13 @@ def main():
         seed_urls(CSV_DIR / "urls.csv")
         seed_events(CSV_DIR / "events.csv")
 
+        # Reset auto-increment sequences after seeding with explicit IDs
+        for table in ("users", "urls", "events"):
+            db.execute_sql(
+                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                f"COALESCE((SELECT MAX(id) FROM {table}), 1))"
+            )
+
         print("\nDone! Sample API keys (first 5 users):")
         for user in User.select().order_by(User.id).limit(5):
             print(f"  user_id={user.id}  username={user.username}  api_key={user.api_key}")

@@ -89,6 +89,8 @@ def get_user(user_id):
 
 @users_crud_bp.route("/", methods=["POST"])
 def create_user():
+    from app.database import db
+
     # Fractured Vessel: reject non-JSON bodies
     data = request.get_json(force=True, silent=True)
     if data is None:
@@ -102,12 +104,15 @@ def create_user():
         return jsonify(error="username and email are required"), 400
 
     try:
-        user = User.create(
-            username=username,
-            email=email,
-            api_key=_generate_api_key(),
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        )
+        # Use a savepoint so that if IntegrityError occurs, the transaction
+        # is not left in an aborted state (PostgreSQL requirement).
+        with db.atomic():
+            user = User.create(
+                username=username,
+                email=email,
+                api_key=_generate_api_key(),
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
         return jsonify(_user_dict(user)), 201
     except IntegrityError:
         pass
@@ -115,8 +120,10 @@ def create_user():
     # Twin's Paradox: if exact same username+email already exists, return it
     # idempotently rather than erroring. Only 409 if it's a true conflict
     # (same username, different email, or vice versa).
-    existing = User.get_or_none(User.username == username)
-    if existing and existing.email == email:
+    existing = User.get_or_none(
+        (User.username == username) & (User.email == email)
+    )
+    if existing:
         return jsonify(_user_dict(existing)), 201
 
     return jsonify(error="username or email already exists"), 409

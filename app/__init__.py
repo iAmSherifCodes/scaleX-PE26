@@ -95,6 +95,14 @@ def _bootstrap_db():
                     for batch in chunked(records, 100):
                         Event.insert_many(batch).on_conflict_ignore().execute()
 
+        # Reset sequences after seeding with explicit IDs so that
+        # auto-increment doesn't collide with existing rows.
+        for table in ("users", "urls", "events"):
+            db.execute_sql(
+                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+                f"COALESCE((SELECT MAX(id) FROM {table}), 1))"
+            )
+
     except Exception:
         import traceback
         traceback.print_exc()
