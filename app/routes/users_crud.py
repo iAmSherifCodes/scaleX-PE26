@@ -103,9 +103,24 @@ def create_user():
     if not username or not email:
         return jsonify(error="username and email are required"), 400
 
+    # Pre-check for conflicts with specific error messages
+    existing_username = User.get_or_none(User.username == username)
+    existing_email = User.get_or_none(User.email == email)
+
+    if existing_username and existing_email:
+        # Same user exists with both — return idempotently
+        if existing_username.id == existing_email.id:
+            return jsonify(_user_dict(existing_username)), 201
+        # Both taken by different users
+        return jsonify(error="username and email already exist"), 409
+
+    if existing_username:
+        return jsonify(error="username already exists"), 409
+
+    if existing_email:
+        return jsonify(error="email already exists"), 409
+
     try:
-        # Use a savepoint so that if IntegrityError occurs, the transaction
-        # is not left in an aborted state (PostgreSQL requirement).
         with db.atomic():
             user = User.create(
                 username=username,
@@ -115,18 +130,7 @@ def create_user():
             )
         return jsonify(_user_dict(user)), 201
     except IntegrityError:
-        pass
-
-    # Twin's Paradox: if exact same username+email already exists, return it
-    # idempotently rather than erroring. Only 409 if it's a true conflict
-    # (same username, different email, or vice versa).
-    existing = User.get_or_none(
-        (User.username == username) & (User.email == email)
-    )
-    if existing:
-        return jsonify(_user_dict(existing)), 201
-
-    return jsonify(error="username or email already exists"), 409
+        return jsonify(error="username or email already exists"), 409
 
 
 @users_crud_bp.route("/<int:user_id>", methods=["PUT"])
