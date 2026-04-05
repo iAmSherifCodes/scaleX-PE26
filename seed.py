@@ -32,7 +32,7 @@ from app.models.event import Event  # noqa: E402
 from app.models.url import Url  # noqa: E402
 from app.models.user import User  # noqa: E402
 
-CSV_DIR = Path(__file__).parent.parent  # one level above project root
+CSV_DIR = Path(__file__).parent / "data"  # CSV files in data/ directory
 
 
 def parse_dt(value: str) -> datetime:
@@ -62,7 +62,7 @@ def seed_users(path: Path) -> None:
 
     with db.atomic():
         for batch in chunked(data, 100):
-            User.insert_many(batch).execute()
+            User.insert_many(batch).on_conflict_ignore().execute()
 
     print(f"  Inserted {len(data)} users.")
 
@@ -88,7 +88,7 @@ def seed_urls(path: Path) -> None:
 
     with db.atomic():
         for batch in chunked(data, 100):
-            Url.insert_many(batch).execute()
+            Url.insert_many(batch).on_conflict_ignore().execute()
 
     print(f"  Inserted {len(data)} URLs.")
 
@@ -112,7 +112,7 @@ def seed_events(path: Path) -> None:
 
     with db.atomic():
         for batch in chunked(data, 100):
-            Event.insert_many(batch).execute()
+            Event.insert_many(batch).on_conflict_ignore().execute()
 
     print(f"  Inserted {len(data)} events.")
 

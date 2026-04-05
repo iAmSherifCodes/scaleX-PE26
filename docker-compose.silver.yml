@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: hackathon_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hackathon_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "5432:5432"
+
+  app1:
+    build:
+      context: .
+    environment:
+      FLASK_DEBUG: "false"
+      DATABASE_NAME: hackathon_db
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      REDIS_URL: ""
+      CACHE_TTL_SECONDS: 60
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app2:
+    build:
+      context: .
+    environment:
+      FLASK_DEBUG: "false"
+      DATABASE_NAME: hackathon_db
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      REDIS_URL: ""
+      CACHE_TTL_SECONDS: 60
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app3:
+    build:
+      context: .
+    environment:
+      FLASK_DEBUG: "false"
+      DATABASE_NAME: hackathon_db
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      REDIS_URL: ""
+      CACHE_TTL_SECONDS: 60
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - app1
+      - app2
+      - app3
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
