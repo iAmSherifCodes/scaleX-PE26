@@ -58,8 +58,6 @@ def _bootstrap_db():
             if csv_path.exists():
                 with open(csv_path, newline="") as f:
                     rows = list(csv.DictReader(f))
-                valid_user_ids = set(User.select(User.id).tuples())
-                valid_user_ids = {uid for (uid,) in valid_user_ids}
                 records = [
                     {
                         "id": int(r["id"]),
@@ -72,7 +70,6 @@ def _bootstrap_db():
                         "updated_at": _parse_dt(r["updated_at"]),
                     }
                     for r in rows
-                    if int(r["user_id"]) in valid_user_ids
                 ]
                 with db.atomic():
                     for batch in chunked(records, 100):
@@ -83,7 +80,6 @@ def _bootstrap_db():
             if csv_path.exists():
                 with open(csv_path, newline="") as f:
                     rows = list(csv.DictReader(f))
-                valid_url_ids = {uid for (uid,) in Url.select(Url.id).tuples()}
                 records = [
                     {
                         "id": int(r["id"]),
@@ -94,7 +90,6 @@ def _bootstrap_db():
                         "details": r["details"],
                     }
                     for r in rows
-                    if int(r["url_id"]) in valid_url_ids and int(r["user_id"]) in valid_user_ids
                 ]
                 with db.atomic():
                     for batch in chunked(records, 100):
