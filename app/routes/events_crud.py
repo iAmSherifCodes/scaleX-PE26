@@ -70,7 +70,7 @@ def bulk_load():
         for batch in chunked(records, 100):
             Event.insert_many(batch).on_conflict_ignore().execute()
 
-    return jsonify(loaded=len(records), file=filename), 201
+    return jsonify(imported=len(records), file=filename), 201
 
 
 @events_crud_bp.route("", methods=["GET"], strict_slashes=False)
@@ -96,21 +96,30 @@ def list_events():
 
 @events_crud_bp.route("", methods=["POST"], strict_slashes=False)
 def create_event():
-    data = request.get_json(silent=True) or {}
+    # Fractured Vessel: reject non-JSON / malformed bodies
+    data = request.get_json(force=True, silent=True)
+    if data is None:
+        return jsonify(error="Request body must be valid JSON"), 400
+
     url_id = data.get("url_id")
     user_id = data.get("user_id")
     event_type = data.get("event_type", "").strip()
     details = data.get("details", {})
 
+    # Unwitting Stranger: reject missing required fields
     if not url_id or not event_type:
         return jsonify(error="url_id and event_type are required"), 400
+
+    # Deceitful Scroll: details must be a JSON object, not a plain string
+    if details is not None and not isinstance(details, dict):
+        return jsonify(error="details must be a JSON object, not a string or other type"), 400
 
     event = Event.create(
         url_id=int(url_id),
         user_id=int(user_id) if user_id is not None else None,
         event_type=event_type,
         timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
-        details=json.dumps(details) if isinstance(details, dict) else (details or "{}"),
+        details=json.dumps(details) if details else "{}",
     )
 
     return jsonify(_event_dict(event)), 201

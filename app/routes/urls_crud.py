@@ -1,10 +1,12 @@
 import csv
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 from peewee import DoesNotExist
 
+from app.cache import cache, redirect_cache_key
 from app.models.url import Url
 from app.utils import generate_short_code
 
@@ -68,7 +70,7 @@ def bulk_load():
         for batch in chunked(records, 100):
             Url.insert_many(batch).on_conflict_ignore().execute()
 
-    return jsonify(loaded=len(records), file=filename), 201
+    return jsonify(imported=len(records), file=filename), 201
 
 
 @urls_crud_bp.route("", methods=["GET"], strict_slashes=False)
@@ -105,8 +107,13 @@ def get_url(url_id):
 
 @urls_crud_bp.route("", methods=["POST"], strict_slashes=False)
 def create_url():
-    data = request.get_json(silent=True) or {}
+    # Fractured Vessel: reject non-JSON / malformed bodies
+    data = request.get_json(force=True, silent=True)
+    if data is None:
+        return jsonify(error="Request body must be valid JSON"), 400
+
     original_url = data.get("original_url", "").strip()
+    # Unwitting Stranger: reject missing required fields
     if not original_url:
         return jsonify(error="original_url is required"), 400
 
@@ -123,6 +130,12 @@ def create_url():
         is_active=True,
         created_at=now,
         updated_at=now,
+    )
+
+    # Prime the redirect cache with the new URL
+    cache.set(
+        redirect_cache_key(url.short_code),
+        json.dumps({"u": url.original_url, "id": url.id, "uid": url.user_id}),
     )
 
     return jsonify(_url_dict(url)), 201
@@ -146,6 +159,8 @@ def update_url(url_id):
     if changed:
         url.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         url.save()
+        # Slumbering Guide: invalidate cache so deactivated URLs stop redirecting
+        cache.delete(redirect_cache_key(url.short_code))
 
     return jsonify(_url_dict(url)), 200
 
@@ -157,5 +172,6 @@ def delete_url(url_id):
     except DoesNotExist:
         return jsonify(error="URL not found"), 404
 
+    cache.delete(redirect_cache_key(url.short_code))
     url.delete_instance()
     return "", 204

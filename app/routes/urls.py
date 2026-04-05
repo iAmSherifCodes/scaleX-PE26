@@ -35,7 +35,8 @@ def create_url():
         updated_at=now,
     )
 
-    cache.set(redirect_cache_key(short_code), original_url)
+    import json as _json
+    cache.set(redirect_cache_key(short_code), _json.dumps({"u": original_url, "id": url.id, "uid": g.current_user.id}))
 
     log_event(url.id, g.current_user.id, "created", {"short_code": short_code, "original_url": original_url})
 
